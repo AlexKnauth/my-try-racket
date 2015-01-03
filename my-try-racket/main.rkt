@@ -19,12 +19,8 @@
                  [sandbox-propagate-exceptions #f])
     (make-evaluator 'racket)))
 
-(define already-text '())
-
-
-(define in-progress-text "")
-
-(define (make-page/already-text+action-url already-text prompt action-url)
+;; make-page/already-text+prompt+action-url : lsthtml lsthtml action-url -> html
+(define (make-page/already-text+prompt+action-url already-text prompt action-url)
   `(html (head (title "My Try-Racket Repl, in progress")
                (style "body {font-family: monospace;}"
                       ".output {color: purple;}"
@@ -46,8 +42,8 @@
 
 (define (my-response #:request request
                      #:ev ev
-                     #:already-text already-text
-                     #:in-progress-text in-progress-text)
+                     #:already-text already-text ; lsthtml
+                     #:in-progress-text in-progress-text) ; string
   (define bindings (request-bindings request))
   (define-values (new-already-text new-in-progress-text new-prompt)
     (cond [(exists-binding? 'expr bindings)
@@ -63,7 +59,7 @@
           [else (values already-text "" '("> "))]))
   (define (response-generator embed/url)
     (response/xexpr
-     (make-page/already-text+action-url
+     (make-page/already-text+prompt+action-url
       (append new-already-text (string->lsthtml new-in-progress-text))
       new-prompt
       (embed/url
