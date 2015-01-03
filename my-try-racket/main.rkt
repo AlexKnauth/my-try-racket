@@ -24,11 +24,7 @@
 
 (define in-progress-text "")
 
-(define (make-page/already-text+action-url already-text action-url)
-  (define-values (new-already-text form-stuff)
-    (match already-text
-      [(list stuff ... "> ") (values stuff '("> "))]
-      [else (values already-text '())]))
+(define (make-page/already-text+action-url already-text prompt action-url)
   `(html (head (title "My Try-Racket Repl, in progress")
                (style "body {font-family: monospace;}"
                       ".output {color: purple;}"
@@ -38,9 +34,9 @@
                       ))
          (body
           (h1 "My Try-Racket Repl, in progress")
-          ,@new-already-text
+          ,@already-text
           (form ((action ,action-url))
-                ,@form-stuff
+                ,@prompt
                 (input ((name "expr") (autofocus "true") (class "input"))))
           )))
 
@@ -53,25 +49,26 @@
                      #:already-text already-text
                      #:in-progress-text in-progress-text)
   (define bindings (request-bindings request))
-  (define-values (new-already-text new-in-progress-text)
+  (define-values (new-already-text new-in-progress-text new-prompt)
     (cond [(exists-binding? 'expr bindings)
            (define expr (string-append in-progress-text (extract-binding/single 'expr bindings) "\n"))
            (define stx-exprs (str-expr->stx-exprs? expr))
            (cond [stx-exprs
                   (values (append already-text
                                   (string->lsthtml expr)
-                                  (eval-stx-exprs->lsthtml stx-exprs ev)
-                                  (list "> "))
-                          "")]
-                 [else (values already-text expr)])]
-          [else (values (append already-text (list "> ")) "")]))
+                                  (eval-stx-exprs->lsthtml stx-exprs ev))
+                          ""
+                          '("> "))]
+                 [else (values already-text expr '())])]
+          [else (values already-text "" '("> "))]))
   (define (response-generator embed/url)
     (response/xexpr
      (make-page/already-text+action-url
       (append new-already-text (string->lsthtml new-in-progress-text))
+      new-prompt
       (embed/url
        (λ (request) (my-response #:request request #:ev ev
-                                 #:already-text new-already-text
+                                 #:already-text (append new-already-text new-prompt)
                                  #:in-progress-text new-in-progress-text))))))
   (send/suspend/dispatch response-generator))
 
