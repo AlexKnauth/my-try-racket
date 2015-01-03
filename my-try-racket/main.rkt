@@ -6,68 +6,96 @@
          racket/format
          racket/string
          racket/list
+         racket/local
+         racket/match
          )
 
-(define ev
+(define (start request)
+  (my-response #:ev (make-ev) #:request request #:already-text '() #:in-progress-text ""))
+
+(define (make-ev)
   (parameterize ([sandbox-output 'string]
                  [sandbox-error-output 'string]
                  [sandbox-propagate-exceptions #f])
     (make-evaluator 'racket)))
 
 (define already-text '())
-(define (extend-already-text! . stuff)
-  (set! already-text (append already-text stuff)))
+
 
 (define in-progress-text "")
-(define (extend-in-progress-text! . strs)
-  (set! in-progress-text (string-append* in-progress-text strs)))
 
-(define (myresponse request)
+(define (make-page/already-text+action-url already-text action-url)
+  (define-values (new-already-text form-stuff)
+    (match already-text
+      [(list stuff ... "> ") (values stuff '("> "))]
+      [else (values already-text '())]))
+  `(html (head (title "My Try-Racket Repl, in progress")
+               (style "body {font-family: monospace;}"
+                      ".output {color: purple;}"
+                      ".error-output {color: red;}"
+                      ".value {color: blue;}"
+                      ".input {font-family: monospace; width: 80%;}"
+                      ))
+         (body
+          (h1 "My Try-Racket Repl, in progress")
+          ,@new-already-text
+          (form ((action ,action-url))
+                ,@form-stuff
+                (input ((name "expr") (autofocus "true") (class "input"))))
+          )))
+
+(define (string->lsthtml str)
+  (define strs (string-split str "\n"))
+  (append-map (λ (s) `(,s (br))) strs))
+
+(define (my-response #:request request
+                     #:ev ev
+                     #:already-text already-text
+                     #:in-progress-text in-progress-text)
   (define bindings (request-bindings request))
-  (when (exists-binding? 'expr bindings)
-    (define expr (extract-binding/single 'expr bindings))
-    (extend-already-text! expr '(br))
-    (eval-and-handle-expr! expr)
-    )
-  (when (string=? in-progress-text "")
-    (extend-already-text! "> "))
-  (response/xexpr
-   `(html (head (title "My Try-Racket Repl, in progress")
-                (style "body {font-family: monospace;}"
-                       ".output {color: purple;}"
-                       ".error-output {color: red;}"
-                       ".value {color: blue;}"
-                       ".input {font-family: monospace; width: 100%;}"
-                       ))
-          (body
-           (h1 "My Try-Racket Repl, in progress")
-           ,@already-text
-           (form (input ((name "expr") (autofocus "true") (class "input"))))
-           ))))
+  (define-values (new-already-text new-in-progress-text)
+    (cond [(exists-binding? 'expr bindings)
+           (define expr (string-append in-progress-text (extract-binding/single 'expr bindings) "\n"))
+           (define stx-exprs (str-expr->stx-exprs? expr))
+           (cond [stx-exprs
+                  (values (append already-text
+                                  (string->lsthtml expr)
+                                  (eval-stx-exprs->lsthtml stx-exprs ev)
+                                  (list "> "))
+                          "")]
+                 [else (values already-text expr)])]
+          [else (values (append already-text (list "> ")) "")]))
+  (define (response-generator embed/url)
+    (response/xexpr
+     (make-page/already-text+action-url
+      (append new-already-text (string->lsthtml new-in-progress-text))
+      (embed/url
+       (λ (request) (my-response #:request request #:ev ev
+                                 #:already-text new-already-text
+                                 #:in-progress-text new-in-progress-text))))))
+  (send/suspend/dispatch response-generator))
 
-(define (eval-and-handle-expr! expr)
-  (extend-in-progress-text! expr "\n")
+(define (str-expr->stx-exprs? str-expr)
   (define (read/exn in)
     (with-handlers ([exn:fail:read? (λ (x) x)])
       (read-syntax 'my-try-racket-repl in)))
   (define exprs
-    (for/list ([expr (in-port read/exn (open-input-string in-progress-text))])
+    (for/list ([expr (in-port read/exn (open-input-string str-expr))])
       expr))
-  (cond [(ormap exn:fail:read? exprs) (void)]
-        [else
-         (set! in-progress-text "")
-         (for ([expr (in-list exprs)])
-           (define lst (call-with-values (λ () (ev expr)) list))
-           (define output (get-output ev))
-           (define err-output (get-error-output ev))
-           (define (string->lsthtml str)
-             (define strs (string-split str "\n"))
-             (append-map (λ (s) `(,s (br))) strs))
-           (extend-already-text!
-            `(span ((class "output")) ,@(string->lsthtml output))
-            `(span ((class "error-output")) ,@(string->lsthtml err-output))
-            `(span () ,@(for/list ([val (in-list lst)] #:when (not (void? val)))
-                          `(span ((class "value")) ,@(string->lsthtml (~v val))))))
-           )]))
+  (cond [(ormap exn:fail:read? exprs) #f]
+        [else exprs]))
+  
 
-(serve/servlet myresponse)
+(define (eval-stx-exprs->lsthtml stx-exprs ev)
+  (append*
+   (for/list ([expr (in-list stx-exprs)])
+     (define lst (call-with-values (λ () (ev expr)) list))
+     (define output (get-output ev))
+     (define err-output (get-error-output ev))
+     (list
+      `(span ((class "output")) ,@(string->lsthtml output))
+      `(span ((class "error-output")) ,@(string->lsthtml err-output))
+      `(span () ,@(for/list ([val (in-list lst)] #:when (not (void? val)))
+                    `(span ((class "value")) ,@(string->lsthtml (~v val)))))))))
+
+(serve/servlet start)
