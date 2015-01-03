@@ -22,7 +22,7 @@
 ;; make-page/already-text+prompt+action-url : lsthtml lsthtml action-url -> html
 (define (make-page/already-text+prompt+action-url already-text prompt action-url)
   `(html (head (title "My Try-Racket Repl, in progress")
-               (style "body {font-family: monospace; font-size: 12pt}"
+               (style "body {font-family: monospace; font-size: 12pt;}"
                       ".output {color: purple;}"
                       ".error-output {color: red;}"
                       ".value {color: blue;}"
